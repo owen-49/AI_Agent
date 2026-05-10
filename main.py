@@ -50,7 +50,11 @@ class HigherAlgebraProfessorAgent:
             
             if is_valid:
                 eigenvals = math_res.get('eigenvalues', {})
-                is_elegant = all(val.is_integer for val in eigenvals.keys() if val.is_real)
+                if isinstance(eigenvals, dict):
+                    eigen_vals = list(eigenvals.keys())
+                else:
+                    eigen_vals = list(eigenvals)
+                is_elegant = all(val.is_integer for val in eigen_vals if val.is_real)
                 
                 if is_elegant:
                     print(f"成功生成数值优美的题目。特征值: {list(eigenvals.keys())}")
