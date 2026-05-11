@@ -16,7 +16,7 @@ PROBLEM_PROMPT_TEMPLATE = """
     "title": "题目名称",
     "topic": "{topic}",
     "difficulty": {difficulty},
-    "latex_statement": "LaTeX 格式题干",
+    "latex_statement": "LaTeX 格式题干，显示数学公式必须使用 $$...$$ 包裹（例如 $$\\begin{{bmatrix}}...\\end{{bmatrix}}$$），行内公式使用 $...$",
     "sympy_script": "import sympy; lambdas=[1,2,3]; P=sympy.Matrix([[1,0,0],[1,1,0],[0,1,1]]); A=P*sympy.diag(*lambdas)*P.inv(); result = {{'matrix': A, 'eigenvalues': A.eigenvals()}}",
     "analytical_solution": "分步骤的详细 LaTeX 解析"
 }}

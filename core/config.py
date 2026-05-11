@@ -5,5 +5,5 @@ load_dotenv()
 
 class Config:
     API_KEY = os.getenv("OPENAI_API_KEY")
-    MODEL_NAME = "deepseek-v4-pro"  
+    MODEL_NAME = "gpt-4o"  
     TEMPERATURE = 0.1     
