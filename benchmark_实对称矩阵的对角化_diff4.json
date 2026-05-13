@@ -1,0 +1,53 @@
+{
+    "total_trials": 10,
+    "success_count": 9,
+    "failed_count": 1,
+    "total_time": 174.7470738887787,
+    "problems": [
+        {
+            "trial": 1,
+            "matrix_str": "from sympy import Matrix, symbols\n\n# 定义符号\nx = symbols('x')\n\n# 定义矩阵 A\nA = Matrix([[4, -2], [-2, 1]])\n\n# 计算特征值和特征向量\nlambdas = A.eigenvals()\neigenvectors = A.eigenvects()\n\n# 结果字典\nresult = {\n    'eigenvalues': lambdas,\n    'eigenvectors': eigenvectors\n}",
+            "time_taken": 13.05
+        },
+        {
+            "trial": 2,
+            "matrix_str": "from sympy import Matrix, symbols\nv1 = Matrix([1, 2])\nv2 = Matrix([2, -1])\nlambda1 = 6\nlambda2 = -3\nA1 = (lambda1 * v1 * v1.T) / (v1.T * v1)[0]\nA2 = (lambda2 * v2 * v2.T) / (v2.T * v2)[0]\nA = A1 + A2\nresult = {'Matrix A': A}",
+            "time_taken": 10.77
+        },
+        {
+            "trial": 3,
+            "matrix_str": "from sympy import Matrix, diag\nlambdas = [-2, 3]\nP = Matrix([[2, 1], [1, 1]])\nD = diag(*lambdas)\nP_inv = P.inv()\nA = P * D * P_inv\nresult = {'A': A, 'is_symmetric': A == A.T}",
+            "time_taken": 24.39
+        },
+        {
+            "trial": 4,
+            "matrix_str": "from sympy import Matrix, diag\n\n# Define the eigenvalues\nlambdas = [3, -2, 5, 0]\n\n# Define the P matrix\nP = Matrix([[1, 2, 0, 1], [0, 1, 1, 0], [1, 0, 1, 1], [0, 0, 1, 1]])\n\n# Calculate the inverse of P\nP_inv = P.inv()\n\n# Define the diagonal matrix D\nd = diag(*lambdas)\n\n# Calculate the matrix A\nA = P * d * P_inv\n\n# Store the result\nresult = {'A': A.tolist()}\n",
+            "time_taken": 8.17
+        },
+        {
+            "trial": 5,
+            "matrix_str": "from sympy import Matrix, symbols, diag\neigenvalues = [10, -2, 6]\nP = Matrix([[1, 2, 1], [0, 1, -1], [1, 0, 2]])\nP_inv = P.inv()\nD = diag(*eigenvalues)\nA = P * D * P_inv\nA_symmetric = A - A.T\nresult = {'A_is_symmetric': A_symmetric == Matrix.zeros(3, 3),\n          'eigenvalues': A.eigenvals(multiple=True)}",
+            "time_taken": 19.18
+        },
+        {
+            "trial": 6,
+            "matrix_str": "from sympy import Matrix\nimport numpy as np\n\nv1 = Matrix([1, 0, 1])\nv2 = Matrix([0, 1, 1])\nv3 = Matrix([1, 1, 0])\n\nlambda_1 = 4\nlambda_2 = -2\nlambda_3 = 7\n\n# Calculate A = sum(lambda_i * (v_i * v_i.T) / (v_i.T * v_i))\nA1 = lambda_1 * (v1 * v1.T) / (v1.T * v1)[0]\nA2 = lambda_2 * (v2 * v2.T) / (v2.T * v2)[0]\nA3 = lambda_3 * (v3 * v3.T) / (v3.T * v3)[0]\nA = A1 + A2 + A3\n\n# Verify if A is symmetric and integer\nis_symmetric = A == A.T\nis_integer = np.all(np.mod(A, 1) == 0)\n\nresult = {'A': A, 'is_symmetric': is_symmetric, 'is_integer': is_integer}",
+            "time_taken": 14.85
+        },
+        {
+            "trial": 7,
+            "matrix_str": "from sympy import Matrix, eye\n\n# Define the matrix\nA = Matrix([[4, 2, 2], [2, 4, 2], [2, 2, 4]])\n\n# Calculate the rank of the matrix\nrank_A = A.rank()\n\n# Perform row reduction\nrref_A, pivot_columns = A.rref()\n\n# Eigenvalues and eigenvectors for diagonalization\nP, D = A.diagonalize()\n\n# Store results\nresult = {\n    'rank_A': rank_A,\n    'rref_A': rref_A,\n    'pivot_columns': pivot_columns,\n    'P': P,\n    'D': D\n}",
+            "time_taken": 11.33
+        },
+        {
+            "trial": 8,
+            "matrix_str": "from sympy import Matrix, symbols, diag\n\n# 定义特征值\nlambda1, lambda2 = 9, 13\n\n# 构造 P 矩阵\nP = Matrix([[2, 1], [1, 1]])\n# 计算其逆矩阵\nP_inv = P.inv()\n\n# 构造对角矩阵 D\nD = diag(lambda1, lambda2)\n\n# 计算 A 矩阵\nA = P * D * P_inv\n\n# 计算特征值\neig = A.eigenvals()\n\n# 存储结果\nresult = {\n    'A': A,\n    'is_symmetric': A == A.T,\n    'eigenvalues': eig\n}",
+            "time_taken": 18.1
+        },
+        {
+            "trial": 9,
+            "matrix_str": "from sympy import Matrix, symbols\nimport numpy as np\n\nv1 = Matrix([1, 0, 1])\nv2 = Matrix([0, 1, 1])\nv3 = Matrix([1, 1, 0])\nlambda1, lambda2, lambda3 = 4, -3, 5\n\n# Construct A using the spectral decomposition\nA = lambda1 * (v1 * v1.T) / (v1.T * v1)[0] + lambda2 * (v2 * v2.T) / (v2.T * v2)[0] + lambda3 * (v3 * v3.T) / (v3.T * v3)[0]\n\n# Check if A is symmetric and its elements are integers\nis_symmetric = A == A.T\nare_elements_integer = all(isinstance(x, int) for x in np.array(A).flatten())\n\nresult = {'symmetry': is_symmetric, 'integer_elements': are_elements_integer, 'matrix': A}",
+            "time_taken": 28.51
+        }
+    ]
+}

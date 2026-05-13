@@ -8,26 +8,29 @@ from core.config import Config
 from core.prompts import SYSTEM_PROMPT, PROBLEM_PROMPT_TEMPLATE, CONSTRUCTION_PROTOCOLS, REFLECTION_PROMPT
 from core.engine import MathEngine
 
-class HigherAlgebraProfessorAgent:
+
+class AsyncHigherAlgebraProfessorAgent:
+    """异步版 Agent：ReAct 状态机的 LLM 调用全部使用 ainvoke，支持并发"""
+
     def __init__(self):
         self.llm = ChatOpenAI(
             model=Config.MODEL_NAME,
             openai_api_key=Config.API_KEY,
             openai_api_base="https://api.openai.com/v1",
             temperature=Config.TEMPERATURE,
-            max_retries=3
+            max_retries=3,
         )
         self.engine = MathEngine()
         self.max_loop = 3
 
+    # ── 工具方法（无 I/O，同步即可）──────────────────────────────────────
+
     def _generate_random_seeds(self, difficulty):
-        """每次生成题目时注入不同的随机种子参数"""
         random.seed(time.time_ns())
 
-        matrix_sizes = [2, 2, 3, 3, 3, 4]  # 加权分布：2x2 和 4x4 较少，3x3 较多
+        matrix_sizes = [2, 2, 3, 3, 3, 4]
         size = random.choice(matrix_sizes)
 
-        # 根据难度调整特征值范围
         if difficulty <= 2:
             eigen_min, eigen_max = -3, 5
         elif difficulty <= 4:
@@ -40,10 +43,9 @@ class HigherAlgebraProfessorAgent:
             "证明题：要求学生证明某个数学性质",
             "应用题：将矩阵理论与实际场景结合",
             "分析题：要求学生分析矩阵的结构性质",
-            "综合题：融合多个知识点的综合性题目"
+            "综合题：融合多个知识点的综合性题目",
         ]
         problem_type = random.choice(problem_types)
-
         protocol = random.choice(CONSTRUCTION_PROTOCOLS)
 
         return {
@@ -51,7 +53,7 @@ class HigherAlgebraProfessorAgent:
             "eigen_min": eigen_min,
             "eigen_max": eigen_max,
             "problem_type": problem_type,
-            "protocol": protocol
+            "protocol": protocol,
         }
 
     def _extract_json(self, text):
@@ -61,15 +63,14 @@ class HigherAlgebraProfessorAgent:
                 return json.loads(json_str.group(1))
             return json.loads(text)
         except Exception as e:
-            print(f"解析异常: {e}")
+            print(f"  [JSON解析异常] {e}")
             return None
 
     def _build_initial_prompt(self, topic, difficulty, seeds):
-        """构建 ReAct 初始 prompt（不含反馈）"""
         formatted_protocol = seeds["protocol"].format(
             size=seeds["matrix_size"],
             eigen_min=seeds["eigen_min"],
-            eigen_max=seeds["eigen_max"]
+            eigen_max=seeds["eigen_max"],
         )
         return PROBLEM_PROMPT_TEMPLATE.format(
             topic=topic,
@@ -78,39 +79,38 @@ class HigherAlgebraProfessorAgent:
             matrix_size=seeds["matrix_size"],
             eigen_min=seeds["eigen_min"],
             eigen_max=seeds["eigen_max"],
-            problem_type=seeds["problem_type"]
+            problem_type=seeds["problem_type"],
         )
 
     def _build_reflection_prompt(self, observation):
-        """构建 ReAct 反思 prompt（Observation → Reflection → new Reasoning）"""
         return REFLECTION_PROMPT.format(observation=observation)
 
-    def generate_verified_problem(self, topic, difficulty):
-        """ReAct 状态机：Reasoning → Acting → Observing → (Reflection → Reasoning → ...) → Done"""
+    # ── 核心异步方法 ────────────────────────────────────────────────────
+
+    async def generate_verified_problem(self, topic, difficulty):
+        """异步 ReAct 状态机：Reasoning → Acting → Observing → (Reflection → ...) → Done"""
         seeds = self._generate_random_seeds(difficulty)
 
-        print(f"\n{'='*60}")
-        print(f"[ReAct 状态机启动]")
-        print(f"  随机种子: size={seeds['matrix_size']}, eigen_range=[{seeds['eigen_min']},{seeds['eigen_max']}], type={seeds['problem_type']}")
-        print(f"  构造协议: {seeds['protocol'][:60]}...")
+        print(
+            f"[Async] 启动: topic={topic[:20]}... diff={difficulty} "
+            f"size={seeds['matrix_size']} eigen=[{seeds['eigen_min']},{seeds['eigen_max']}]"
+        )
 
         initial_prompt = self._build_initial_prompt(topic, difficulty, seeds)
 
         messages = [
             SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=initial_prompt)
+            HumanMessage(content=initial_prompt),
         ]
 
         for attempt in range(self.max_loop):
             state_label = "REASONING+ACTING" if attempt == 0 else "REFLECTING→REASONING+ACTING"
-            print(f"\n[ReAct 迭代 {attempt + 1}/{self.max_loop}] 状态: {state_label}")
 
-            # ── Phase 1+2: REASONING + ACTING (single LLM call) ──
-            response = self.llm.invoke(messages)
+            # ── Phase 1+2: 异步 REASONING + ACTING ──
+            response = await self.llm.ainvoke(messages)
             data = self._extract_json(response.content)
 
             if not data:
-                print("  [OBSERVATION] ❌ JSON 解析失败")
                 observation = (
                     "JSON 格式解析失败。请确保："
                     "1) 输出包含在 ```json ... ``` 代码块中；"
@@ -120,25 +120,22 @@ class HigherAlgebraProfessorAgent:
                 messages.append(HumanMessage(content=self._build_reflection_prompt(observation)))
                 continue
 
-            reasoning = data.get('reasoning', '(模型未输出 reasoning 字段)')
-            print(f"  [REASONING] {reasoning[:200]}...")
+            reasoning = data.get("reasoning", "")
+            print(f"  [{state_label} #{attempt+1}] {reasoning[:120]}...")
 
-            # ── Phase 3: OBSERVING (sandbox execution) ──
+            # ── Phase 3: OBSERVING（同步，毫秒级）──
             is_valid, math_res = self.engine.verify_logic(data["sympy_script"])
 
             if is_valid:
-                eigenvals = math_res.get('eigenvalues', {})
+                eigenvals = math_res.get("eigenvalues", {})
                 if isinstance(eigenvals, dict):
                     eigen_vals = list(eigenvals.keys())
-                elif hasattr(eigenvals, '__iter__') and not isinstance(eigenvals, (bool, str)):
-                    eigen_vals = list(eigenvals)
                 else:
-                    eigen_vals = []
-                is_elegant = eigen_vals and all(val.is_integer for val in eigen_vals if val.is_real)
+                    eigen_vals = list(eigenvals)
+                is_elegant = all(val.is_integer for val in eigen_vals if val.is_real)
 
                 if is_elegant:
-                    print(f"  [OBSERVATION] ✅ 验证通过，特征值 {eigen_vals} 均为整数")
-                    print(f"  [ReAct 状态机] 状态: DONE")
+                    print(f"  [DONE] ✅ 特征值: {eigen_vals}")
                     return data
                 else:
                     observation = (
@@ -149,31 +146,11 @@ class HigherAlgebraProfessorAgent:
             else:
                 observation = f"SymPy 验证脚本执行错误: {math_res}"
 
-            print(f"  [OBSERVATION] ❌ {str(observation)[:150]}")
+            print(f"  [OBSERVATION] ❌ {str(observation)[:120]}")
 
-            # ── Phase 4: REFLECTION (inject observation → next iteration) ──
+            # ── Phase 4: REFLECTION → 下一轮迭代 ──
             messages.append(AIMessage(content=response.content))
             messages.append(HumanMessage(content=self._build_reflection_prompt(observation)))
 
-        print(f"\n[ReAct 状态机] ❌ 超过最大迭代次数 {self.max_loop}，状态: FAILED")
+        print(f"  [FAILED] ❌ 超过最大迭代次数 {self.max_loop}")
         return None
-
-def display_output(data):
-    if not data: return
-    print("\n" + "═"*60)
-    print(f"【课题】{data['title']} (难度: {data['difficulty']})")
-    print(f"【知识点】{data['topic']}")
-    print("-" * 60)
-    print(f"【题干 (LaTeX)】:\n{data['latex_statement']}")
-    print("-" * 60)
-    print(f"【标准解题步骤】:\n{data['analytical_solution']}")
-    print("═"*60 + "\n")
-
-if __name__ == "__main__":
-    prof_agent = HigherAlgebraProfessorAgent()
-
-    topic_input = "实对称矩阵的特征值性质与对角化"
-    problem_data = prof_agent.generate_verified_problem(topic_input, 4)
-
-    if problem_data:
-        display_output(problem_data)
