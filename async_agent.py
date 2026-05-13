@@ -102,24 +102,37 @@ class AsyncHigherAlgebraProfessorAgent:
         return REFLECTION_PROMPT.format(observation=observation)
 
     def _check_eigenvalues_integer(self, math_res):
-        """Robust check: are all computed eigenvalues integers?"""
+        """Robust check: are all computed eigenvalues integers?
+
+        Handles both SymPy Integer objects (from A.eigenvals() dict keys)
+        and plain Python ints/floats (from LLM-generated result lists).
+        """
         eigenvals = math_res.get('eigenvalues', {})
         if isinstance(eigenvals, dict):
-            eigen_vals = list(eigenvals.keys())
+            eigen_vals_raw = list(eigenvals.keys())
         elif hasattr(eigenvals, '__iter__') and not isinstance(eigenvals, (bool, str)):
-            eigen_vals = list(eigenvals)
+            eigen_vals_raw = list(eigenvals)
         else:
             return False, []
 
-        if not eigen_vals:
+        if not eigen_vals_raw:
             return False, []
 
-        all_int = all(
-            getattr(val, 'is_Integer', getattr(val, 'is_integer', False))
-            for val in eigen_vals
-            if getattr(val, 'is_real', True)
-        )
-        return all_int, eigen_vals
+        eigen_vals = []
+        for val in eigen_vals_raw:
+            try:
+                num = int(val)
+                eigen_vals.append(num)
+            except (TypeError, ValueError):
+                try:
+                    num = float(val)
+                    if num != int(num):
+                        return False, [val]
+                    eigen_vals.append(int(num))
+                except (TypeError, ValueError):
+                    return False, [val]
+
+        return True, eigen_vals
 
     # ── 核心异步方法 ────────────────────────────────────────────────────
 

@@ -18,23 +18,68 @@ class OutputParser:
         )
 
     @classmethod
+    def _normalize_newlines(cls, text):
+        """Normalize all newline variants to a single consistent format."""
+        text = text.replace('\\\n', '\n')
+        text = text.replace('\\\\n', '\n')
+        text = text.replace('\\n', '\n')
+        text = re.sub(r'\\\n', '\n', text)
+        text = re.sub(r'[\r\n]+', '\n', text)
+        return text
+
+    @classmethod
+    def _normalize_latex_delimiters(cls, text):
+        """Ensure LaTeX is wrapped in proper delimiters for markdown rendering."""
+        text = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', text, flags=re.DOTALL)
+        text = re.sub(r'\\\((.*?)\\\)', r'$\1$', text)
+        return text
+
+    @classmethod
     def clean_for_streamlit(cls, text):
         if not text:
             return ""
 
-        text = text.replace('\\n', '\n')
-
-        text = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', text, flags=re.DOTALL)
+        text = cls._normalize_newlines(text)
+        text = cls._normalize_latex_delimiters(text)
 
         text = re.sub(r'(?<!\\)\[([\s\S]*?\\begin\{[pBvV]matrix\}[\s\S]*?\\end\{[pBvV]matrix\}[\s\S]*?)\]', r'$$\1$$', text)
-
-        text = re.sub(r'\\\((.*?)\\\)', r'$\1$', text)
 
         parts = re.split(r'(\$\$[\s\S]*?\$\$)', text)
         result = []
         for part in parts:
             if part.startswith('$$') and part.endswith('$$'):
                 result.append(part)
+            else:
+                sub_parts = re.split(r'(\$[^$\n]+?\$)', part)
+                for sp in sub_parts:
+                    if sp.startswith('$') and sp.endswith('$') and len(sp) > 2:
+                        result.append(sp)
+                    else:
+                        result.append(cls._wrap_latex_envs(sp))
+        return ''.join(result)
+
+    @classmethod
+    def clean_for_markdown(cls, text):
+        """Clean text for standalone .md file export.
+
+        Normalizes newlines, strips trailing backslashes, and ensures proper
+        LaTeX delimiters for MathJax/KaTeX rendering in markdown viewers.
+        """
+        if not text:
+            return ""
+
+        text = cls._normalize_newlines(text)
+        text = cls._normalize_latex_delimiters(text)
+
+        text = re.sub(r'(?<!\\)\[([\s\S]*?\\begin\{[pBvV]matrix\}[\s\S]*?\\end\{[pBvV]matrix\}[\s\S]*?)\]', r'$$\1$$', text)
+
+        parts = re.split(r'(\$\$[\s\S]*?\$\$)', text)
+        result = []
+        for part in parts:
+            if part.startswith('$$') and part.endswith('$$'):
+                cleaned = re.sub(r'[\r\n]+', ' ', part)
+                cleaned = re.sub(r'\s+', ' ', cleaned)
+                result.append(cleaned)
             else:
                 sub_parts = re.split(r'(\$[^$\n]+?\$)', part)
                 for sp in sub_parts:
@@ -135,26 +180,29 @@ if generate_btn:
         
         clean_statement = OutputParser.clean_for_streamlit(data.get('latex_statement', ''))
         clean_solution = OutputParser.clean_for_streamlit(data.get('analytical_solution', ''))
-        
+
+        md_statement = OutputParser.clean_for_markdown(data.get('latex_statement', ''))
+        md_solution = OutputParser.clean_for_markdown(data.get('analytical_solution', ''))
+
         tab1, tab2, tab3 = st.tabs(["📄 试题预览", "💡 详细解析", "🛠️ 符号逻辑审计"])
-        
+
         with tab1:
             st.subheader(f"题目：{data.get('title', '高等代数综合题')}")
             with st.container(border=True):
                 st.markdown(clean_statement)
-                
+
         with tab2:
             st.subheader("标准参考解析")
             with st.container(border=True):
                 st.markdown(clean_solution)
-                
+
         with tab3:
             st.subheader("Agent 真值比对与代码审计")
             st.info(data.get('consistency_check', '系统已通过 SymPy 引擎对生成的数学对象进行了反向构造与真值校验。'))
-            
+
             st.markdown("**底层物理沙箱验证脚本 (Python/SymPy)：**")
             st.code(data.get('sympy_script', '# 未提取到脚本'), language="python")
-            
+
             st.markdown("**系统状态日志：**")
             st.json({
                 "Status": "Verified ✅",
@@ -164,12 +212,21 @@ if generate_btn:
 
         st.markdown("---")
         export_md = f"""# {data.get('title', '高等代数题')}
-*生成时间: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}*
+
+*生成时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}*
 *难度等级: {'★' * difficulty}*
 
-{clean_statement}
+---
 
-{clean_solution}
+## 题目
+
+{md_statement}
+
+---
+
+## 解析
+
+{md_solution}
 """
         st.download_button(
             label="📥 一键导出为 Markdown (支持 LaTeX 渲染)",

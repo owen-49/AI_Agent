@@ -1,13 +1,33 @@
 {
     "total_trials": 5,
-    "success_count": 1,
-    "failed_count": 4,
-    "total_time": 120.24749112129211,
+    "success_count": 5,
+    "failed_count": 0,
+    "total_time": 113.65048265457153,
     "problems": [
         {
+            "trial": 1,
+            "matrix_str": "from sympy import Matrix, symbols, diag, eye; A = Matrix([[5, 2], [2, 2]]); lambda_ = symbols('lambda'); char_poly = A.charpoly(lambda_); eigenvals = A.eigenvals(); is_symmetric = A == A.T; Q, D = A.diagonalize(); orthogonal_check = Q.T * Q == eye(2); result = {'eigenvalues': list(eigenvals.keys()), 'is_symmetric': is_symmetric, 'orthogonal_check': orthogonal_check}",
+            "time_taken": 17.37
+        },
+        {
             "trial": 2,
-            "matrix_str": "from sympy import Matrix, diag, eye, sqrt\nv1 = Matrix([1, 0, -1])\nv2 = Matrix([0, 1, 1])\nv3 = Matrix([1, 1, 0])\nlambda1, lambda2, lambda3 = 4, -3, 6\n# Gram-Schmidt process to orthogonalize\nq1 = v1 / v1.norm()\nu2 = v2 - (v2.dot(q1)) * q1\nq2 = u2 / u2.norm()\nu3 = v3 - (v3.dot(q1)) * q1 - (v3.dot(q2)) * q2\nq3 = u3 / u3.norm()\nQ = Matrix.hstack(q1, q2, q3)\nD = diag(lambda1, lambda2, lambda3)\nA = Q * D * Q.T\nis_orthogonal = (Q.T * Q).simplify() == eye(3)\nresult = {'A': A, 'is_symmetrical': A == A.T, 'is_orthogonal': is_orthogonal, 'eigenvalues': A.eigenvals()}",
-            "time_taken": 8.91
+            "matrix_str": "from sympy import Matrix, symbols, solve\nA = Matrix([[4, 3], [3, -4]])\nlambda_ = symbols('lambda')\nchar_eq = A.charpoly(lambda_).as_expr()\neigenvalues = solve(char_eq, lambda_)\nresult = {'eigenvalues': eigenvalues}\n",
+            "time_taken": 14.66
+        },
+        {
+            "trial": 3,
+            "matrix_str": "from sympy import Matrix; A = Matrix([[-1, 2, 0, 0], [2, -4, 0, 0], [0, 0, 7, 2], [0, 0, 2, 4]]); is_symmetric = A == A.T; eigenvalues = A.eigenvals(); result = {'is_symmetric': is_symmetric, 'eigenvalues': eigenvalues}",
+            "time_taken": 20.11
+        },
+        {
+            "trial": 4,
+            "matrix_str": "from sympy import Matrix, symbols; A = Matrix([[6, 0, 0], [0, 1, 6], [0, 6, 6]]); eigenvalues = A.eigenvals(); eigenvectors = A.eigenvects(); result = {'eigenvalues': list(eigenvalues.keys())}",
+            "time_taken": 15.1
+        },
+        {
+            "trial": 5,
+            "matrix_str": "from sympy import Matrix\n\nA = Matrix([[-3, 0, 2, 0], [0, -1, 0, 2], [2, 0, 0, 0], [0, 2, 0, -4]])\neigenvalues = A.eigenvals(multiple=True)\nis_symmetric = A == A.T\n\nresult = {'is_symmetric': is_symmetric, 'eigenvalues': eigenvalues}",
+            "time_taken": 46.41
         }
     ]
 }
