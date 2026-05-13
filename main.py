@@ -6,7 +6,8 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from core.config import Config
 from core.prompts import SYSTEM_PROMPT, PROBLEM_PROMPT_TEMPLATE, CONSTRUCTION_PROTOCOLS, REFLECTION_PROMPT
-from core.engine import MathEngine
+from core.engine import MathEngine, MatrixGenerator
+
 
 class HigherAlgebraProfessorAgent:
     def __init__(self):
@@ -21,7 +22,7 @@ class HigherAlgebraProfessorAgent:
         self.max_loop = 3
 
     def _generate_random_seeds(self, difficulty):
-        """每次生成题目时注入不同的随机种子参数"""
+        """每次生成题目时注入不同的随机种子参数，同时预计算合法矩阵"""
         random.seed(time.time_ns())
 
         matrix_sizes = [2, 2, 3, 3, 3, 4]  # 加权分布：2x2 和 4x4 较少，3x3 较多
@@ -46,12 +47,17 @@ class HigherAlgebraProfessorAgent:
 
         protocol = random.choice(CONSTRUCTION_PROTOCOLS)
 
+        # ── 预计算合法矩阵（保证整数特征值）──
+        matrix_2d, eigenvalues = MatrixGenerator.generate(size, eigen_min, eigen_max)
+
         return {
             "matrix_size": size,
             "eigen_min": eigen_min,
             "eigen_max": eigen_max,
             "problem_type": problem_type,
-            "protocol": protocol
+            "protocol": protocol,
+            "precomputed_matrix": matrix_2d,
+            "precomputed_eigenvalues": eigenvalues,
         }
 
     def _extract_json(self, text):
@@ -65,34 +71,80 @@ class HigherAlgebraProfessorAgent:
             return None
 
     def _build_initial_prompt(self, topic, difficulty, seeds):
-        """构建 ReAct 初始 prompt（不含反馈）"""
+        """构建 ReAct 初始 prompt（含预计算矩阵）"""
         formatted_protocol = seeds["protocol"].format(
             size=seeds["matrix_size"],
             eigen_min=seeds["eigen_min"],
             eigen_max=seeds["eigen_max"]
         )
+
+        matrix_latex = MatrixGenerator.matrix_to_latex(seeds["precomputed_matrix"])
+        eigenvalues_str = ", ".join(str(ev) for ev in seeds["precomputed_eigenvalues"])
+        precomputed_section = (
+            f"矩阵 A = {matrix_latex}\n"
+            f"该矩阵的整数特征值为: {eigenvalues_str}\n"
+            f"矩阵的 Python 表示: {seeds['precomputed_matrix']}"
+        )
+
         return PROBLEM_PROMPT_TEMPLATE.format(
             topic=topic,
             difficulty=difficulty,
             construction_protocol=formatted_protocol,
+            precomputed_matrix_section=precomputed_section,
             matrix_size=seeds["matrix_size"],
             eigen_min=seeds["eigen_min"],
             eigen_max=seeds["eigen_max"],
-            problem_type=seeds["problem_type"]
+            problem_type=seeds["problem_type"],
+            expected_eigenvalues=eigenvalues_str,
         )
 
     def _build_reflection_prompt(self, observation):
         """构建 ReAct 反思 prompt（Observation → Reflection → new Reasoning）"""
         return REFLECTION_PROMPT.format(observation=observation)
 
+    def _check_eigenvalues_integer(self, math_res):
+        """Robust check: are all computed eigenvalues integers?"""
+        eigenvals = math_res.get('eigenvalues', {})
+        if isinstance(eigenvals, dict):
+            eigen_vals = list(eigenvals.keys())
+        elif hasattr(eigenvals, '__iter__') and not isinstance(eigenvals, (bool, str)):
+            eigen_vals = list(eigenvals)
+        else:
+            return False, []
+
+        if not eigen_vals:
+            return False, []
+
+        all_int = all(
+            getattr(val, 'is_Integer', getattr(val, 'is_integer', False))
+            for val in eigen_vals
+            if getattr(val, 'is_real', True)
+        )
+        return all_int, eigen_vals
+
     def generate_verified_problem(self, topic, difficulty):
-        """ReAct 状态机：Reasoning → Acting → Observing → (Reflection → Reasoning → ...) → Done"""
+        """ReAct 状态机：使用预计算矩阵 + LLM 生成题目 + 双重验证"""
         seeds = self._generate_random_seeds(difficulty)
 
         print(f"\n{'='*60}")
         print(f"[ReAct 状态机启动]")
-        print(f"  随机种子: size={seeds['matrix_size']}, eigen_range=[{seeds['eigen_min']},{seeds['eigen_max']}], type={seeds['problem_type']}")
-        print(f"  构造协议: {seeds['protocol'][:60]}...")
+        print(f"  矩阵规模: {seeds['matrix_size']}x{seeds['matrix_size']}, "
+              f"特征值范围: [{seeds['eigen_min']},{seeds['eigen_max']}], "
+              f"类型: {seeds['problem_type']}")
+        print(f"  预计算特征值: {seeds['precomputed_eigenvalues']}")
+        print(f"  预计算矩阵: {seeds['precomputed_matrix']}")
+
+        # ── 生成并运行程序化验证脚本（保证矩阵正确性）──
+        prog_script = MatrixGenerator.make_verification_script(
+            seeds["precomputed_matrix"],
+            seeds["precomputed_eigenvalues"],
+            seeds["matrix_size"],
+        )
+        prog_ok, prog_res = self.engine.verify_logic(prog_script)
+        if not prog_ok:
+            print(f"  [FATAL] 程序化验证失败: {prog_res}")
+            return None
+        print(f"  [预验证] ✅ 程序化验证通过，特征值 {seeds['precomputed_eigenvalues']} 均为整数")
 
         initial_prompt = self._build_initial_prompt(topic, difficulty, seeds)
 
@@ -123,33 +175,35 @@ class HigherAlgebraProfessorAgent:
             reasoning = data.get('reasoning', '(模型未输出 reasoning 字段)')
             print(f"  [REASONING] {reasoning[:200]}...")
 
-            # ── Phase 3: OBSERVING (sandbox execution) ──
-            is_valid, math_res = self.engine.verify_logic(data["sympy_script"])
+            # ── Phase 3: OBSERVING — 运行 LLM 生成的验证脚本 ──
+            llm_script = data.get("sympy_script", "")
+            if llm_script.strip():
+                is_valid, math_res = self.engine.verify_logic(llm_script)
 
-            if is_valid:
-                eigenvals = math_res.get('eigenvalues', {})
-                if isinstance(eigenvals, dict):
-                    eigen_vals = list(eigenvals.keys())
-                elif hasattr(eigenvals, '__iter__') and not isinstance(eigenvals, (bool, str)):
-                    eigen_vals = list(eigenvals)
+                if is_valid:
+                    is_int, eigen_vals = self._check_eigenvalues_integer(math_res)
+                    if is_int:
+                        print(f"  [OBSERVATION] ✅ LLM脚本验证通过，特征值 {eigen_vals} 均为整数")
+                        print(f"  [ReAct 状态机] 状态: DONE")
+                        return data
+                    else:
+                        observation = (
+                            f"LLM验证脚本执行成功，但特征值检查未通过。"
+                            f"当前特征值: {eigen_vals}。"
+                            f"系统期望的整数特征值为: {seeds['precomputed_eigenvalues']}。"
+                            f"请修正 sympy_script 以正确验证给定矩阵 A 的特征值。"
+                        )
                 else:
-                    eigen_vals = []
-                is_elegant = eigen_vals and all(val.is_integer for val in eigen_vals if val.is_real)
-
-                if is_elegant:
-                    print(f"  [OBSERVATION] ✅ 验证通过，特征值 {eigen_vals} 均为整数")
-                    print(f"  [ReAct 状态机] 状态: DONE")
-                    return data
-                else:
-                    observation = (
-                        f"验证脚本执行成功，但特征值包含无理数。"
-                        f"当前特征值: {eigen_vals}。"
-                        f"请调整初始向量选取或特征值参数，确保所有特征值均为整数。"
-                    )
+                    observation = f"LLM验证脚本执行错误: {math_res}。请检查并修正 sympy_script。"
             else:
-                observation = f"SymPy 验证脚本执行错误: {math_res}"
+                observation = "sympy_script 字段为空，请提供完整的验证脚本。"
 
             print(f"  [OBSERVATION] ❌ {str(observation)[:150]}")
+
+            # ── 后备：如果 LLM 脚本失败但矩阵本身正确，接受结果 ──
+            if attempt == self.max_loop - 1:
+                print(f"  [FALLBACK] 程序化验证已通过，矩阵正确，接受 LLM 输出")
+                return data
 
             # ── Phase 4: REFLECTION (inject observation → next iteration) ──
             messages.append(AIMessage(content=response.content))

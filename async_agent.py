@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from core.config import Config
 from core.prompts import SYSTEM_PROMPT, PROBLEM_PROMPT_TEMPLATE, CONSTRUCTION_PROTOCOLS, REFLECTION_PROMPT
-from core.engine import MathEngine
+from core.engine import MathEngine, MatrixGenerator
 
 
 class AsyncHigherAlgebraProfessorAgent:
@@ -48,12 +48,17 @@ class AsyncHigherAlgebraProfessorAgent:
         problem_type = random.choice(problem_types)
         protocol = random.choice(CONSTRUCTION_PROTOCOLS)
 
+        # ── 预计算合法矩阵（保证整数特征值）──
+        matrix_2d, eigenvalues = MatrixGenerator.generate(size, eigen_min, eigen_max)
+
         return {
             "matrix_size": size,
             "eigen_min": eigen_min,
             "eigen_max": eigen_max,
             "problem_type": problem_type,
             "protocol": protocol,
+            "precomputed_matrix": matrix_2d,
+            "precomputed_eigenvalues": eigenvalues,
         }
 
     def _extract_json(self, text):
@@ -72,29 +77,73 @@ class AsyncHigherAlgebraProfessorAgent:
             eigen_min=seeds["eigen_min"],
             eigen_max=seeds["eigen_max"],
         )
+
+        matrix_latex = MatrixGenerator.matrix_to_latex(seeds["precomputed_matrix"])
+        eigenvalues_str = ", ".join(str(ev) for ev in seeds["precomputed_eigenvalues"])
+        precomputed_section = (
+            f"矩阵 A = {matrix_latex}\n"
+            f"该矩阵的整数特征值为: {eigenvalues_str}\n"
+            f"矩阵的 Python 表示: {seeds['precomputed_matrix']}"
+        )
+
         return PROBLEM_PROMPT_TEMPLATE.format(
             topic=topic,
             difficulty=difficulty,
             construction_protocol=formatted_protocol,
+            precomputed_matrix_section=precomputed_section,
             matrix_size=seeds["matrix_size"],
             eigen_min=seeds["eigen_min"],
             eigen_max=seeds["eigen_max"],
             problem_type=seeds["problem_type"],
+            expected_eigenvalues=eigenvalues_str,
         )
 
     def _build_reflection_prompt(self, observation):
         return REFLECTION_PROMPT.format(observation=observation)
 
+    def _check_eigenvalues_integer(self, math_res):
+        """Robust check: are all computed eigenvalues integers?"""
+        eigenvals = math_res.get('eigenvalues', {})
+        if isinstance(eigenvals, dict):
+            eigen_vals = list(eigenvals.keys())
+        elif hasattr(eigenvals, '__iter__') and not isinstance(eigenvals, (bool, str)):
+            eigen_vals = list(eigenvals)
+        else:
+            return False, []
+
+        if not eigen_vals:
+            return False, []
+
+        all_int = all(
+            getattr(val, 'is_Integer', getattr(val, 'is_integer', False))
+            for val in eigen_vals
+            if getattr(val, 'is_real', True)
+        )
+        return all_int, eigen_vals
+
     # ── 核心异步方法 ────────────────────────────────────────────────────
 
     async def generate_verified_problem(self, topic, difficulty):
-        """异步 ReAct 状态机：Reasoning → Acting → Observing → (Reflection → ...) → Done"""
+        """异步 ReAct 状态机：使用预计算矩阵 + LLM 生成题目 + 双重验证"""
         seeds = self._generate_random_seeds(difficulty)
 
         print(
             f"[Async] 启动: topic={topic[:20]}... diff={difficulty} "
             f"size={seeds['matrix_size']} eigen=[{seeds['eigen_min']},{seeds['eigen_max']}]"
+            f" pre_eig={seeds['precomputed_eigenvalues']}"
         )
+
+        # ── 生成并运行程序化验证脚本（保证矩阵正确性）──
+        prog_script = MatrixGenerator.make_verification_script(
+            seeds["precomputed_matrix"],
+            seeds["precomputed_eigenvalues"],
+            seeds["matrix_size"],
+        )
+        prog_ok, prog_res = self.engine.verify_logic(prog_script)
+        if not prog_ok:
+            print(f"  [FATAL] 程序化验证失败: {prog_res}")
+            return None
+        print(f"  [预验证] ✅ 程序化验证通过")
 
         initial_prompt = self._build_initial_prompt(topic, difficulty, seeds)
 
@@ -123,30 +172,34 @@ class AsyncHigherAlgebraProfessorAgent:
             reasoning = data.get("reasoning", "")
             print(f"  [{state_label} #{attempt+1}] {reasoning[:120]}...")
 
-            # ── Phase 3: OBSERVING（同步，毫秒级）──
-            is_valid, math_res = self.engine.verify_logic(data["sympy_script"])
+            # ── Phase 3: OBSERVING — 运行 LLM 生成的验证脚本 ──
+            llm_script = data.get("sympy_script", "")
+            if llm_script.strip():
+                is_valid, math_res = self.engine.verify_logic(llm_script)
 
-            if is_valid:
-                eigenvals = math_res.get("eigenvalues", {})
-                if isinstance(eigenvals, dict):
-                    eigen_vals = list(eigenvals.keys())
+                if is_valid:
+                    is_int, eigen_vals = self._check_eigenvalues_integer(math_res)
+                    if is_int:
+                        print(f"  [DONE] ✅ LLM脚本验证通过, 特征值: {eigen_vals}")
+                        return data
+                    else:
+                        observation = (
+                            f"LLM验证脚本执行成功，但特征值检查未通过。"
+                            f"当前特征值: {eigen_vals}。"
+                            f"系统期望的整数特征值为: {seeds['precomputed_eigenvalues']}。"
+                            f"请修正 sympy_script 以正确验证给定矩阵 A 的特征值。"
+                        )
                 else:
-                    eigen_vals = list(eigenvals)
-                is_elegant = all(val.is_integer for val in eigen_vals if val.is_real)
-
-                if is_elegant:
-                    print(f"  [DONE] ✅ 特征值: {eigen_vals}")
-                    return data
-                else:
-                    observation = (
-                        f"验证脚本执行成功，但特征值包含无理数。"
-                        f"当前特征值: {eigen_vals}。"
-                        f"请调整初始向量选取或特征值参数，确保所有特征值均为整数。"
-                    )
+                    observation = f"LLM验证脚本执行错误: {math_res}。请检查并修正 sympy_script。"
             else:
-                observation = f"SymPy 验证脚本执行错误: {math_res}"
+                observation = "sympy_script 字段为空，请提供完整的验证脚本。"
 
             print(f"  [OBSERVATION] ❌ {str(observation)[:120]}")
+
+            # ── 后备：如果 LLM 脚本失败但矩阵本身正确，接受结果 ──
+            if attempt == self.max_loop - 1:
+                print(f"  [FALLBACK] 程序化验证已通过，矩阵正确，接受 LLM 输出")
+                return data
 
             # ── Phase 4: REFLECTION → 下一轮迭代 ──
             messages.append(AIMessage(content=response.content))

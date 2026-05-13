@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(PYTHONIOENCODING=utf-8 C:/Users/32998/anaconda3/envs/math-agent/python.exe -c ' *)"
+    ]
+  }
+}
